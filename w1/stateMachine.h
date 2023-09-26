@@ -8,6 +8,7 @@ public:
   virtual void enter() const = 0;
   virtual void exit() const = 0;
   virtual void act(float dt, flecs::world &ecs, flecs::entity entity) const = 0;
+  virtual ~State() = default;
 };
 
 class StateTransition

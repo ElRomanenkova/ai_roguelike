@@ -67,6 +67,32 @@ static void on_closest_enemy_pos(flecs::world &ecs, flecs::entity entity, Callab
   });
 }
 
+template<typename Callable>
+static void on_closest_player_pos(flecs::world &ecs, flecs::entity entity, Callable c)
+{
+  static auto playersQuery = ecs.query<const IsPlayer, const Position, const Team>();
+  entity.set([&](const Position &pos, const Team &t, Action &a)
+  {
+    flecs::entity closestPlayer;
+    float closestDist = FLT_MAX;
+    Position closestPos;
+    playersQuery.each([&](flecs::entity player, const IsPlayer&, const Position &ppos, const Team &pt)
+    {
+      if (t.team != pt.team || entity == player)
+        return;
+      float curDist = dist(ppos, pos);
+      if (curDist < closestDist)
+      {
+        closestDist = curDist;
+        closestPos = ppos;
+        closestPlayer = player;
+      }
+    });
+    if (ecs.is_valid(closestPlayer))
+      c(a, pos, closestPos, closestPlayer);
+  });
+}
+
 class MoveToEnemyState : public State
 {
 public:
@@ -77,6 +103,19 @@ public:
     on_closest_enemy_pos(ecs, entity, [&](Action &a, const Position &pos, const Position &enemy_pos)
     {
       a.action = move_towards(pos, enemy_pos);
+    });
+  }
+};
+
+class MoveToPlayerState : public State {
+public:
+  void enter() const override {}
+  void exit() const override {}
+  void act(float/* dt*/, flecs::world &ecs, flecs::entity entity) const override
+  {
+    on_closest_player_pos(ecs, entity, [&](Action &a, const Position &pos, const Position &player_pos, flecs::entity player)
+    {
+      a.action = move_towards(pos, player_pos);
     });
   }
 };
@@ -126,6 +165,47 @@ public:
   void act(float/* dt*/, flecs::world &ecs, flecs::entity entity) const override {}
 };
 
+class SelfHealingState : public State
+{
+private:
+  HealAmount healAmount;
+public:
+  SelfHealingState(float amount) : healAmount{amount} {}
+  void enter() const override {}
+  void exit() const override {}
+  void act(float /* dt*/, flecs::world &ecs, flecs::entity entity) const override
+  {
+    entity.set([&](Hitpoints &hp)
+    {
+      hp.hitpoints += healAmount.amount;
+    });
+  }
+};
+
+class PlayerHealingState : public State
+{
+private:
+  HealAmount healAmount;
+public:
+  PlayerHealingState(float amount) : healAmount{amount} {}
+  void enter() const override {}
+  void exit() const override {}
+  void act(float /* dt*/, flecs::world &ecs, flecs::entity entity) const override
+  {
+    entity.set([&](HealingCooldown &hcd)
+    {
+      hcd.current = hcd.max_cooldown;
+    });
+    on_closest_player_pos(ecs, entity, [&](Action &a, const Position &pos, const Position &player_pos, flecs::entity player)
+    {
+      player.set([&](Hitpoints &hp)
+      {
+        hp.hitpoints += healAmount.amount;
+      });
+    });
+  }
+};
+
 class EnemyAvailableTransition : public StateTransition
 {
   float triggerDist;
@@ -149,6 +229,29 @@ public:
   }
 };
 
+class PlayerAvailableTransition : public StateTransition
+{
+  float triggerDist;
+public:
+  PlayerAvailableTransition(float in_dist) : triggerDist(in_dist) {}
+  bool isAvailable(flecs::world &ecs, flecs::entity entity) const override
+  {
+    static auto playersQuery = ecs.query<const IsPlayer, const Position, const Team>();
+    bool playerFound = false;
+    entity.get([&](const Position &pos, const Team &t)
+    {
+      playersQuery.each([&](flecs::entity player, const IsPlayer&, const Position &ppos, const Team &pt)
+      {
+        if (t.team != pt.team || entity == player)
+          return;
+        float curDist = dist(ppos, pos);
+        playerFound |= curDist <= triggerDist;
+      });
+    });
+    return playerFound;
+  }
+};
+
 class HitpointsLessThanTransition : public StateTransition
 {
   float threshold;
@@ -165,12 +268,44 @@ public:
   }
 };
 
+class PlayerHitpointsLessThanTransition : public StateTransition
+{
+  float threshold;
+public:
+  PlayerHitpointsLessThanTransition(float in_thres) : threshold(in_thres) {}
+  bool isAvailable(flecs::world &ecs, flecs::entity entity) const override
+  {
+    bool hitpointsThresholdReached = false;
+    on_closest_player_pos(ecs, entity, [&](Action &a, const Position &pos, const Position &player_pos, flecs::entity player)
+    {
+      player.get([&](const Hitpoints &hp) {
+        hitpointsThresholdReached |= hp.hitpoints < threshold;
+      });
+    });
+    return hitpointsThresholdReached;
+  }
+};
+
 class EnemyReachableTransition : public StateTransition
 {
 public:
   bool isAvailable(flecs::world &ecs, flecs::entity entity) const override
   {
     return false;
+  }
+};
+
+class AbleToHealTransition : public  StateTransition
+{
+public:
+  bool isAvailable(flecs::world &ecs, flecs::entity entity) const override
+  {
+    bool isAbleToHeal = false;
+    entity.get([&](const HealingCooldown &cd)
+    {
+      isAbleToHeal |= cd.current == 0.f;
+    });
+    return isAbleToHeal;
   }
 };
 
@@ -216,11 +351,15 @@ State *create_move_to_enemy_state()
   return new MoveToEnemyState();
 }
 
+State *create_move_to_player_state()
+{
+  return new MoveToPlayerState();
+}
+
 State *create_flee_from_enemy_state()
 {
   return new FleeFromEnemyState();
 }
-
 
 State *create_patrol_state(float patrol_dist)
 {
@@ -232,10 +371,26 @@ State *create_nop_state()
   return new NopState();
 }
 
+State *create_self_healing_state(float heal_amount)
+{
+  return new SelfHealingState(heal_amount);
+}
+
+State *create_player_healing_state(float heal_amount)
+{
+  return new PlayerHealingState(heal_amount);
+}
+
+
 // transitions
 StateTransition *create_enemy_available_transition(float dist)
 {
   return new EnemyAvailableTransition(dist);
+}
+
+StateTransition *create_player_available_transition(float dist)
+{
+  return new PlayerAvailableTransition(dist);
 }
 
 StateTransition *create_enemy_reachable_transition()
@@ -247,6 +402,16 @@ StateTransition *create_hitpoints_less_than_transition(float thres)
 {
   return new HitpointsLessThanTransition(thres);
 }
+
+StateTransition *create_player_hitpoints_less_than_transition(float thres)
+{
+  return new PlayerHitpointsLessThanTransition(thres);
+}
+
+StateTransition *create_able_to_heal_transition()
+{
+  return new AbleToHealTransition();
+};
 
 StateTransition *create_negate_transition(StateTransition *in)
 {

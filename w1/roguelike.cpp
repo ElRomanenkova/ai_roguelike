@@ -44,6 +44,62 @@ static void add_attack_sm(flecs::entity entity)
   });
 }
 
+static void add_berserk_sm(flecs::entity entity)
+{
+  entity.get([](StateMachine &sm)
+  {
+    int patrol = sm.addState(create_patrol_state(3.f));
+    int moveToEnemy = sm.addState(create_move_to_enemy_state());
+    int moveToEnemy_BerserkMode = sm.addState(create_move_to_enemy_state());
+
+    sm.addTransition(create_enemy_available_transition(3.f), patrol, moveToEnemy);
+    sm.addTransition(create_negate_transition(create_enemy_available_transition(5.f)), moveToEnemy, patrol);
+
+    sm.addTransition(create_hitpoints_less_than_transition(60.f), patrol, moveToEnemy_BerserkMode);
+    sm.addTransition(create_hitpoints_less_than_transition(60.f), moveToEnemy, moveToEnemy_BerserkMode);
+  });
+}
+
+static void add_self_healer_sm(flecs::entity entity)
+{
+  entity.get([](StateMachine &sm)
+  {
+    int patrol = sm.addState(create_patrol_state(3.f));
+    int moveToEnemy = sm.addState(create_move_to_enemy_state());
+    int heal = sm.addState(create_self_healing_state(20.f));
+
+    sm.addTransition(create_enemy_available_transition(3.f), patrol, moveToEnemy);
+    sm.addTransition(create_negate_transition(create_enemy_available_transition(5.f)), moveToEnemy, patrol);
+
+    sm.addTransition(create_hitpoints_less_than_transition(60.f), patrol, heal);
+    sm.addTransition(create_hitpoints_less_than_transition(60.f), moveToEnemy, heal);
+
+    sm.addTransition(create_and_transition(create_enemy_available_transition(5.f), create_negate_transition(create_hitpoints_less_than_transition(60.f))),
+        heal, moveToEnemy);
+    sm.addTransition(create_and_transition(create_negate_transition(create_enemy_available_transition(5.f)), create_negate_transition(create_hitpoints_less_than_transition(60.f))),
+        heal, patrol);
+
+  });
+}
+
+static void add_swordsman_healer_sm(flecs::entity entity)
+{
+  entity.get([](StateMachine &sm) {
+    int moveToPlayer = sm.addState(create_move_to_player_state());
+    int moveToEnemy = sm.addState(create_move_to_enemy_state());
+    int heal = sm.addState(create_player_healing_state(20.f));
+
+    sm.addTransition(create_enemy_available_transition(5.f), moveToPlayer, moveToEnemy);
+    sm.addTransition(create_negate_transition(create_enemy_available_transition(5.f)), moveToEnemy, moveToPlayer);
+
+    sm.addTransition(create_and_transition(create_and_transition(
+        create_player_hitpoints_less_than_transition(80.f),create_player_available_transition(2.f)),
+        create_able_to_heal_transition()), moveToPlayer, heal);
+    sm.addTransition(create_negate_transition(create_and_transition(
+        create_able_to_heal_transition(),create_player_hitpoints_less_than_transition(80.f))), heal, moveToPlayer);
+  });
+}
+
 static flecs::entity create_monster(flecs::world &ecs, int x, int y, Color color)
 {
   return ecs.entity()
@@ -57,6 +113,22 @@ static flecs::entity create_monster(flecs::world &ecs, int x, int y, Color color
     .set(Team{1})
     .set(NumActions{1, 0})
     .set(MeleeDamage{20.f});
+}
+
+static flecs::entity create_teammate(flecs::world &ecs, int x, int y, Color color)
+{
+  return ecs.entity()
+    .set(Position{x, y})
+    .set(MovePos{x, y})
+    .set(PatrolPos{x, y})
+    .set(Hitpoints{100.f})
+    .set(Action{EA_NOP})
+    .set(Color{color})
+    .set(StateMachine{})
+    .set(Team{0})
+    .set(NumActions{1, 0})
+    .set(MeleeDamage{40.f})
+    .set(HealingCooldown{0.f, 10.f});
 }
 
 static void create_player(flecs::world &ecs, int x, int y)
@@ -139,6 +211,9 @@ void init_roguelike(flecs::world &ecs)
   add_patrol_attack_flee_sm(create_monster(ecs, 10, -5, GetColor(0xee00eeff)));
   add_patrol_flee_sm(create_monster(ecs, -5, -5, GetColor(0x111111ff)));
   add_attack_sm(create_monster(ecs, -5, 5, GetColor(0x880000ff)));
+  add_berserk_sm(create_monster(ecs, -5, 0, GetColor(0xff2222ff)));
+  add_self_healer_sm(create_monster(ecs, 5, 0, GetColor(0xffa000ff)));
+  add_swordsman_healer_sm(create_teammate(ecs, 5, -5, GetColor(0x0000dfff)));
 
   create_player(ecs, 0, 0);
 
@@ -256,6 +331,14 @@ static void process_actions(flecs::world &ecs)
   });
 }
 
+static void tick_heal_timer(flecs::world &ecs)
+{
+  ecs.query<HealingCooldown>().each([&](flecs::entity entity, HealingCooldown &cd)
+  {
+    cd.current = std::max(--cd.current, 0.f);
+  });
+}
+
 void process_turn(flecs::world &ecs)
 {
   static auto stateMachineAct = ecs.query<StateMachine>();
@@ -272,6 +355,7 @@ void process_turn(flecs::world &ecs)
         });
       });
     }
+    tick_heal_timer(ecs);
     process_actions(ecs);
   }
 }
