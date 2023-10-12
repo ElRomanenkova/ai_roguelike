@@ -51,6 +51,38 @@ struct Selector : public CompoundNode
   }
 };
 
+struct Negate : public BehNode
+{
+  BehNode *node_;
+
+  Negate(BehNode *beh_node) : node_(beh_node) {}
+  ~Negate() { delete node_; }
+
+  BehResult update(flecs::world &ecs, flecs::entity entity, Blackboard &bb) override
+  {
+    BehResult res = node_->update(ecs, entity, bb);
+    if (res == BEH_FAIL)
+      return BEH_SUCCESS;
+    if (res == BEH_SUCCESS)
+      return BEH_FAIL;
+    return BEH_RUNNING;
+  }
+};
+
+struct Parallel : public CompoundNode
+{
+  BehResult update(flecs::world &ecs, flecs::entity entity, Blackboard &bb) override
+  {
+    for (BehNode* node : nodes)
+    {
+      BehResult res = node->update(ecs, entity, bb);
+      if (res != BEH_RUNNING)
+        return res;
+    }
+    return BEH_RUNNING;
+  }
+};
+
 struct MoveToEntity : public BehNode
 {
   size_t entityBb = size_t(-1); // wraps to 0xff...
@@ -197,6 +229,84 @@ struct Patrol : public BehNode
   }
 };
 
+struct FindBuff : public BehNode
+{
+  size_t entityBb = size_t(-1);
+  FindBuff(flecs::entity entity, const char *bb_name)
+  {
+    entityBb = reg_entity_blackboard_var<flecs::entity>(entity, bb_name);
+  }
+  BehResult update(flecs::world &ecs, flecs::entity entity, Blackboard &bb) override
+  {
+    BehResult res = BEH_FAIL;
+    static auto buffsQuery = ecs.query<const Position, const IsBuff>();
+    entity.get([&](const Position &pos)
+    {
+      flecs::entity closestBuff;
+      float closestDist = FLT_MAX;
+      Position closestPos;
+      buffsQuery.each([&](flecs::entity buff, const Position &epos, const IsBuff &)
+      {
+        float curDist = dist(epos, pos);
+        if (curDist < closestDist)
+        {
+          closestDist = curDist;
+          closestPos = epos;
+          closestBuff = buff;
+        }
+      });
+      if (ecs.is_valid(closestBuff))
+      {
+        bb.set<flecs::entity>(entityBb, closestBuff);
+        res = BEH_SUCCESS;
+      }
+    });
+    return res;
+  }
+};
+
+struct FindWaypoint : public BehNode
+{
+  size_t entityBb = size_t(-1);
+  FindWaypoint(flecs::entity entity, const char *bb_name)
+  {
+    entityBb = reg_entity_blackboard_var<flecs::entity>(entity, bb_name);
+  }
+  BehResult update(flecs::world &ecs, flecs::entity entity, Blackboard &bb) override
+  {
+    auto res = BehResult::BEH_FAIL;
+    entity.get([&](const Waypoint &waypoint)
+    {
+      if (ecs.is_valid(waypoint.next))
+      {
+        bb.set(entityBb, waypoint.next);
+        res = BehResult::BEH_SUCCESS;
+      }
+    });
+    if (res == BEH_SUCCESS)
+    {
+      assert(entityBb != -1);
+      auto waypointEntity = bb.get<flecs::entity>(entityBb);
+      entity.get([&](const Position& pos)
+      {
+        waypointEntity.get([&](const Position &epos, const Waypoint &waypoint)
+          {
+            if (dist(pos, epos) <= 1.0f)
+            {
+              if (ecs.is_valid(waypoint.next))
+              {
+                bb.set(entityBb, waypoint.next);
+                entity.set(waypoint);
+              }
+              else
+                res = BEH_FAIL;
+            }
+          });
+      });
+    }
+    return res;
+  }
+};
 
 BehNode *sequence(const std::vector<BehNode*> &nodes)
 {
@@ -212,6 +322,19 @@ BehNode *selector(const std::vector<BehNode*> &nodes)
   for (BehNode *node : nodes)
     sel->pushNode(node);
   return sel;
+}
+
+BehNode *negate(BehNode *node)
+{
+  return new Negate(node);
+}
+
+BehNode *parallel(const std::vector<BehNode*> &nodes)
+{
+  auto *par = new Parallel;
+  for (BehNode *node : nodes)
+    par->pushNode(node);
+  return par;
 }
 
 BehNode *move_to_entity(flecs::entity entity, const char *bb_name)
@@ -239,3 +362,12 @@ BehNode *patrol(flecs::entity entity, float patrol_dist, const char *bb_name)
   return new Patrol(entity, patrol_dist, bb_name);
 }
 
+BehNode *find_buff(flecs::entity entity, const char *bb_name)
+{
+  return new FindBuff(entity, bb_name);
+}
+
+BehNode *find_waypoint(flecs::entity entity, const char *bb_name)
+{
+  return new FindWaypoint(entity, bb_name);
+}

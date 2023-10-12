@@ -104,6 +104,12 @@ struct Symbol
 };
 
 struct IsPlayer {};
+struct IsBuff {};
+struct PickUpBuff {};
+
+struct Waypoint {
+  flecs::entity next;
+};
 
 struct Team
 {
