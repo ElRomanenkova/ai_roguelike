@@ -42,6 +42,7 @@ namespace goap
   };
 
   float make_plan(const Planner &planner, const WorldState &from, const WorldState &to, std::vector<PlanStep> &plan);
+  float make_plan_ida(const Planner& planner, const WorldState& from, const WorldState& to, std::vector<PlanStep>& plan);
   void print_plan(const Planner &planner, const WorldState &init, const std::vector<PlanStep> &plan);
 };
 

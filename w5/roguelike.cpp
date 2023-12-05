@@ -131,9 +131,9 @@ void init_roguelike(flecs::world &ecs)
   register_roguelike_systems(ecs);
 
   ecs.entity("swordsman_tex")
-    .set(Texture2D{LoadTexture("assets/swordsman.png")});
+    .set(Texture2D{LoadTexture("w5/assets/swordsman.png")});
   ecs.entity("minotaur_tex")
-    .set(Texture2D{LoadTexture("assets/minotaur.png")});
+    .set(Texture2D{LoadTexture("w5/assets/minotaur.png")});
 
   ecs.observer<Texture2D>()
     .event(flecs::OnRemove)
@@ -157,9 +157,9 @@ void init_roguelike(flecs::world &ecs)
 void init_dungeon(flecs::world &ecs, char *tiles, size_t w, size_t h)
 {
   flecs::entity wallTex = ecs.entity("wall_tex")
-    .set(Texture2D{LoadTexture("assets/wall.png")});
+    .set(Texture2D{LoadTexture("w5/assets/wall.png")});
   flecs::entity floorTex = ecs.entity("floor_tex")
-    .set(Texture2D{LoadTexture("assets/floor.png")});
+    .set(Texture2D{LoadTexture("w5/assets/floor.png")});
 
   std::vector<char> dungeonData;
   dungeonData.resize(w * h);
