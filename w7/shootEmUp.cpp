@@ -78,6 +78,8 @@ static void register_roguelike_systems(flecs::world &ecs)
       });
     });
 
+  static IVec2 from{};
+  static IVec2 to{};
   static auto cameraQuery = ecs.query<const Camera2D>();
   ecs.system<const DungeonPortals, const DungeonData>()
     .each([&](const DungeonPortals &dp, const DungeonData &dd)
@@ -135,6 +137,14 @@ static void register_roguelike_systems(flecs::world &ecs)
                      16, WHITE);
           }
         }
+        IVec2 target = {static_cast<int>(mousePosition.x / tile_size), static_cast<int>(mousePosition.y / tile_size)};
+        if (IsMouseButtonPressed(0))
+          from = target;
+        else if (IsMouseButtonPressed(1))
+          to = target;
+
+        const auto path = find_hierarchical_path(dp, dd, from, to);
+        draw_path(path, tile_size);
       });
     });
   steer::register_systems(ecs);
@@ -146,9 +156,9 @@ void init_shoot_em_up(flecs::world &ecs)
   register_roguelike_systems(ecs);
 
   ecs.entity("swordsman_tex")
-    .set(Texture2D{LoadTexture("assets/swordsman.png")});
+    .set(Texture2D{LoadTexture("w7/assets/swordsman.png")});
   ecs.entity("minotaur_tex")
-    .set(Texture2D{LoadTexture("assets/minotaur.png")});
+    .set(Texture2D{LoadTexture("w7/assets/minotaur.png")});
 
   const Position walkableTile = dungeon::find_walkable_tile(ecs);
   create_player(ecs, walkableTile * tile_size, "swordsman_tex");
@@ -157,9 +167,9 @@ void init_shoot_em_up(flecs::world &ecs)
 void init_dungeon(flecs::world &ecs, char *tiles, size_t w, size_t h)
 {
   flecs::entity wallTex = ecs.entity("wall_tex")
-    .set(Texture2D{LoadTexture("assets/wall.png")});
+    .set(Texture2D{LoadTexture("w7/assets/wall.png")});
   flecs::entity floorTex = ecs.entity("floor_tex")
-    .set(Texture2D{LoadTexture("assets/floor.png")});
+    .set(Texture2D{LoadTexture("w7/assets/floor.png")});
 
   std::vector<char> dungeonData;
   dungeonData.resize(w * h);
