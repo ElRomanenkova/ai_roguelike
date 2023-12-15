@@ -72,6 +72,7 @@ enum Actions
   EA_MOVE_END,
   EA_ATTACK = EA_MOVE_END,
   EA_HEAL_SELF,
+  EA_EXPLORE,
   EA_PASS,
   EA_NUM
 };
@@ -108,6 +109,7 @@ struct PlayerInput
   bool right = false;
   bool up = false;
   bool down = false;
+  bool explore = false;
   bool passed = false;
 };
 
@@ -117,6 +119,11 @@ struct Symbol
 };
 
 struct IsPlayer {};
+
+struct IsMage
+{
+  std::string mapName;
+};
 
 struct WorldInfoGatherer {};
 
@@ -140,11 +147,22 @@ struct ActionLog
 
 struct BackgroundTile {};
 
+struct UnexploredTile {};
+
 struct DungeonData
 {
   std::vector<char> tiles; // for pathfinding
   size_t width;
   size_t height;
+};
+
+struct ExplorationData
+{
+  size_t width;
+  size_t height;
+
+  float range;
+  std::vector<bool> isExplored;
 };
 
 struct DijkstraMapData

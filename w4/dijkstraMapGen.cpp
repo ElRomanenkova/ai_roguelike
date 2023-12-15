@@ -1,6 +1,7 @@
 #include "dijkstraMapGen.h"
 #include "ecsTypes.h"
 #include "dungeonUtils.h"
+#include "math.h"
 
 template<typename Callable>
 static void query_dungeon_data(flecs::world &ecs, Callable c)
@@ -80,6 +81,51 @@ void dmaps::gen_player_approach_map(flecs::world &ecs, std::vector<float> &map)
   });
 }
 
+void dmaps::gen_range_approach_map(flecs::world &ecs, std::vector<float> &map, float range)
+{
+  query_dungeon_data(ecs, [&](const DungeonData &dd)
+  {
+    init_tiles(map, dd);
+    query_characters_positions(ecs, [&](const Position &pos, const Team &t)
+    {
+      if (t.team != 0)
+        return;
+
+      for (int dy = - range; dy <= range; dy++)
+        for (int dx = - range; dx <= range; dx++)
+        {
+          int x = pos.x + dx;
+          int y = pos.y + dy;
+          if (x >= 0 && x < int(dd.width) && y >= 0 && y < int(dd.height) && dd.tiles[y * dd.width + x] == dungeon::floor)
+          {
+            bool isVisible = true;
+            Position curPos{pos};
+            Position destPos{x, y};
+
+            while (destPos != curPos)
+            {
+              Position dpos = destPos - curPos;
+              if (abs(dpos.x) > abs(dpos.y))
+                curPos.x += dpos.x > 0 ? 1 : -1;
+              else
+                curPos.y += dpos.y > 0 ? 1 : -1;
+
+              if (dd.tiles[curPos.y * dd.width + curPos.x] == dungeon::wall)
+              {
+                isVisible = false;
+                break;
+              }
+            }
+
+            if (isVisible && (static_cast<float>(abs(x - pos.x) + abs(y - pos.y))) <= range)
+              map[y * dd.width + x] = 0;
+          }
+        }
+    });
+    process_dmap(map, dd);
+  });
+}
+
 void dmaps::gen_player_flee_map(flecs::world &ecs, std::vector<float> &map)
 {
   gen_player_approach_map(ecs, map);
@@ -106,3 +152,51 @@ void dmaps::gen_hive_pack_map(flecs::world &ecs, std::vector<float> &map)
   });
 }
 
+void dmaps::gen_exploration_map(flecs::world& ecs, std::vector<float>& map)
+{
+  auto static query = ecs.query<const Position, ExplorationData>();
+  query_dungeon_data(ecs, [&](const DungeonData& dd)
+  {
+    init_tiles(map, dd);
+    query.each([&](const Position& pos, ExplorationData& ed) {
+      float minDist = 1e5f;
+      Position minPos{pos};
+
+      for(size_t y = 0; y < dd.height; ++y)
+        for (size_t x = 0; x < dd.width; ++x)
+        {
+          if (dd.tiles[y * dd.width + x] != dungeon::floor)
+            continue;
+          float range = dist(Position{ static_cast<int>(x), static_cast<int>(y) }, pos);
+//          if (!ed.isExplored[y * dd.width + x] && range <= ed.range) {
+//            ed.isExplored[y * dd.width + x] = true;
+//          }
+          if (!ed.isExplored[y * dd.width + x] && range < minDist)
+          {
+            minPos = Position{ static_cast<int>(x), static_cast<int>(y) };
+            minDist = range;
+          }
+        }
+      map[minPos.y * dd.width + minPos.x] = 0;
+    });
+    process_dmap(map, dd);
+  });
+}
+
+void dmaps::gen_ally_map(flecs::world& ecs, std::vector<float>& map, const flecs::entity& e, float crit_hp)
+{
+  static auto allyQuery = ecs.query<const Position, const Team>();
+  query_dungeon_data(ecs, [&](const DungeonData& dd)
+  {
+    init_tiles(map, dd);
+    e.get([&](const Team& eteam, const Hitpoints& hp)
+    {
+      allyQuery.each([&](flecs::entity ae, const Position& pos, const Team& team)
+      {
+       if (e != ae && team.team == eteam.team && hp.hitpoints < crit_hp)
+         map[pos.y * dd.width + pos.x] = 0.0f;
+      });
+    });
+    process_dmap(map, dd);
+  });
+}
