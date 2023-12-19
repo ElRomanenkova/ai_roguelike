@@ -121,7 +121,7 @@ static flecs::entity create_teammate(flecs::world &ecs, int x, int y, Color colo
     .set(Position{x, y})
     .set(MovePos{x, y})
     .set(PatrolPos{x, y})
-    .set(Hitpoints{100.f})
+    .set(Hitpoints{10.f})
     .set(Action{EA_NOP})
     .set(Color{color})
     .set(StateMachine{})
@@ -131,12 +131,27 @@ static flecs::entity create_teammate(flecs::world &ecs, int x, int y, Color colo
     .set(HealingCooldown{0.f, 10.f});
 }
 
+//static flecs::entity create_crafter(flecs::world &ecs, int x, int y, Color color)
+//{
+//  return ecs.entity()
+//    .set(Position{x, y})
+//    .set(MovePos{x, y})
+//    .set(Hitpoints{100.f})
+//    .set(Action{EA_NOP})
+//    .set(Color{color})
+//    .set(StateMachine{})
+//    .set(Team{0})
+//    .set(NumActions{1, 0})
+//    .set(MeleeDamage{40.f})
+//    .set(Craft{{0.f, 10.f}, {0.f, 2.f}});
+//}
+
 static void create_player(flecs::world &ecs, int x, int y)
 {
   ecs.entity("player")
     .set(Position{x, y})
     .set(MovePos{x, y})
-    .set(Hitpoints{100.f})
+    .set(Hitpoints{10.f})
     .set(GetColor(0xeeeeeeff))
     .set(Action{EA_NOP})
     .add<IsPlayer>()
@@ -207,22 +222,22 @@ void init_roguelike(flecs::world &ecs)
 {
   register_roguelike_systems(ecs);
 
-  add_patrol_attack_flee_sm(create_monster(ecs, 5, 5, GetColor(0xee00eeff)));
-  add_patrol_attack_flee_sm(create_monster(ecs, 10, -5, GetColor(0xee00eeff)));
-  add_patrol_flee_sm(create_monster(ecs, -5, -5, GetColor(0x111111ff)));
-  add_attack_sm(create_monster(ecs, -5, 5, GetColor(0x880000ff)));
-  add_berserk_sm(create_monster(ecs, -5, 0, GetColor(0xff2222ff)));
-  add_self_healer_sm(create_monster(ecs, 5, 0, GetColor(0xffa000ff)));
+//  add_patrol_attack_flee_sm(create_monster(ecs, 5, 5, GetColor(0xee00eeff)));
+//  add_patrol_attack_flee_sm(create_monster(ecs, 10, -5, GetColor(0xee00eeff)));
+//  add_patrol_flee_sm(create_monster(ecs, -5, -5, GetColor(0x111111ff)));
+//  add_attack_sm(create_monster(ecs, -5, 5, GetColor(0x880000ff)));
+//  add_berserk_sm(create_monster(ecs, -5, 0, GetColor(0xff2222ff)));
+//  add_self_healer_sm(create_monster(ecs, 5, 0, GetColor(0xffa000ff)));
   add_swordsman_healer_sm(create_teammate(ecs, 5, -5, GetColor(0x0000dfff)));
 
   create_player(ecs, 0, 0);
 
-  create_powerup(ecs, 7, 7, 10.f);
-  create_powerup(ecs, 10, -6, 10.f);
-  create_powerup(ecs, 10, -4, 10.f);
-
-  create_heal(ecs, -5, -5, 50.f);
-  create_heal(ecs, -5, 5, 50.f);
+//  create_powerup(ecs, 7, 7, 10.f);
+//  create_powerup(ecs, 10, -6, 10.f);
+//  create_powerup(ecs, 10, -4, 10.f);
+//
+//  create_heal(ecs, -5, -5, 50.f);
+//  create_heal(ecs, -5, 5, 50.f);
 }
 
 static bool is_player_acted(flecs::world &ecs)
@@ -336,6 +351,12 @@ static void tick_heal_timer(flecs::world &ecs)
   ecs.query<HealingCooldown>().each([&](flecs::entity entity, HealingCooldown &cd)
   {
     cd.current = std::max(--cd.current, 0.f);
+    printf("id: %lu, cooldown: %d\n", entity.id(), int(cd.current));
+  });
+  ecs.query<const Hitpoints>().each([&](flecs::entity e, const Hitpoints hp)
+  {
+    bool isPlayer = e.has<IsPlayer>();
+    printf("id: %lu, hp: %d (is player: %d)\n", e.id(), int(hp.hitpoints), int(isPlayer));
   });
 }
 
