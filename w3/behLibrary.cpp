@@ -5,6 +5,8 @@
 #include "raylib.h"
 #include "blackboard.h"
 #include <algorithm>
+#include <random>
+#include <iostream>
 
 struct CompoundNode : public BehNode
 {
@@ -79,6 +81,108 @@ struct UtilitySelector : public BehNode
   }
 };
 
+struct WeightedRandomUtilitySelector : public BehNode
+{
+  std::vector<std::pair<BehNode*, utility_function>> utilityNodes;
+
+  BehResult update(flecs::world &ecs, flecs::entity entity, Blackboard &bb) override
+  {
+    std::vector<std::pair<float, size_t>> utilityWeights;
+    float sum = 0;
+    for (size_t i = 0; i < utilityNodes.size(); ++i)
+    {
+      const float utilityScore = utilityNodes[i].second(bb);
+      sum += utilityScore;
+      utilityWeights.push_back(std::make_pair(utilityScore, i));
+    }
+
+//    std::cout << "Weighted selector: --->\n";
+//    for (const auto& idx : utilityWeights)
+//      std::cout << idx.first << " ";
+//    std::cout << "\n";
+
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<float> dist(0.f, 1.f);
+
+    for (auto& weightedPair : utilityWeights)
+    {
+      weightedPair.first = sum * dist(gen) / weightedPair.first;
+    }
+
+    std::sort(utilityWeights.begin(), utilityWeights.end(), [](auto &lhs, auto &rhs)
+    {
+      return lhs.first < rhs.first;
+    });
+
+//    for (const auto& idx : utilityWeights)
+//      std::cout << idx.first << " ";
+//    std::cout << " <---\n";
+
+    for (const std::pair<float, size_t> &node : utilityWeights)
+    {
+      size_t nodeIdx = node.second;
+      BehResult res = utilityNodes[nodeIdx].first->update(ecs, entity, bb);
+      if (res != BEH_FAIL)
+        return res;
+    }
+    return BEH_FAIL;
+  }
+};
+
+struct InertialUtilitySelector : public BehNode
+{
+  std::vector<std::pair<BehNode*, utility_function>> utilityNodes;
+  std::pair<float, size_t> curInertia = {0.f, -1};
+  const float decreaseRate = 10.0f;
+  const float initInertia = 30.0f;
+
+  BehResult update(flecs::world &ecs, flecs::entity entity, Blackboard &bb) override
+  {
+    std::vector<std::pair<float, size_t>> utilityScores;
+    for (size_t i = 0; i < utilityNodes.size(); ++i)
+    {
+      const float utilityScore = utilityNodes[i].second(bb);
+      utilityScores.push_back(std::make_pair(utilityScore, i));
+    }
+
+//    std::cout << "Inertial selector: --->\n";
+//    for (const auto& idx : utilityScores)
+//      std::cout << idx.first << " ";
+//    std::cout << "\n";
+
+    for (auto& utilityPair : utilityScores)
+      if (utilityPair.second == curInertia.second)
+      {
+        auto& utility = utilityPair.first;
+        utility += curInertia.first;
+        utility -= std::max(utility - decreaseRate, 0.0f);
+        break;
+      }
+
+    std::sort(utilityScores.begin(), utilityScores.end(), [](auto &lhs, auto &rhs)
+    {
+      return lhs.first > rhs.first;
+    });
+
+//    for (const auto& idx : utilityWeights)
+//      std::cout << idx.first << " ";
+//    std::cout << " <---\n";
+
+    for (const std::pair<float, size_t> &node : utilityScores)
+    {
+      size_t nodeIdx = node.second;
+      BehResult res = utilityNodes[nodeIdx].first->update(ecs, entity, bb);
+      if (res != BEH_FAIL) {
+        if (nodeIdx != curInertia.second)
+          curInertia = { initInertia, nodeIdx };
+        return res;
+      }
+    }
+    return BEH_FAIL;
+  }
+};
+
 struct MoveToEntity : public BehNode
 {
   size_t entityBb = size_t(-1); // wraps to 0xff...
@@ -110,6 +214,42 @@ struct MoveToEntity : public BehNode
       });
     });
     return res;
+  }
+};
+
+struct MoveToBase : public BehNode
+{
+  MoveToBase() = default;
+
+  BehResult update(flecs::world &, flecs::entity entity, Blackboard &bb) override
+  {
+    BehResult res = BEH_RUNNING;
+    entity.set([&](Action &a, const Position &pos)
+    {
+      auto target_pos = bb.get<Position>("basePos");
+      if (pos != target_pos)
+      {
+        a.action = move_towards(pos, target_pos);
+        res = BEH_RUNNING;
+      }
+      else
+        res = BEH_SUCCESS;
+    });
+    return res;
+  }
+};
+
+struct MoveRandomly : public BehNode
+{
+  MoveRandomly() = default;
+
+  BehResult update(flecs::world &, flecs::entity entity, Blackboard &bb) override
+  {
+    entity.set([&](Action &a)
+    {
+      a.action = GetRandomValue(EA_MOVE_START, EA_MOVE_END - 1);
+    });
+    return BEH_RUNNING;
   }
 };
 
@@ -269,9 +409,33 @@ BehNode *utility_selector(const std::vector<std::pair<BehNode*, utility_function
   return usel;
 }
 
+BehNode *weighted_random_utility_selector(const std::vector<std::pair<BehNode*, utility_function>> &nodes)
+{
+  auto *usel = new WeightedRandomUtilitySelector;
+  usel->utilityNodes = nodes;
+  return usel;
+}
+
+BehNode *inertial_utility_selector(const std::vector<std::pair<BehNode*, utility_function>> &nodes)
+{
+  auto *usel = new InertialUtilitySelector;
+  usel->utilityNodes = nodes;
+  return usel;
+}
+
 BehNode *move_to_entity(flecs::entity entity, const char *bb_name)
 {
   return new MoveToEntity(entity, bb_name);
+}
+
+BehNode* move_to_base()
+{
+  return new MoveToBase();
+}
+
+BehNode* move_randomly()
+{
+  return new MoveRandomly();
 }
 
 BehNode *is_low_hp(float thres)

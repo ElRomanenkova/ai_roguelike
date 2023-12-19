@@ -6,6 +6,9 @@
 #include "blackboard.h"
 #include "math.h"
 
+template<typename T>
+static void push_info_to_bb(Blackboard &bb, const char *name, const T &val);
+
 static void create_fuzzy_monster_beh(flecs::entity e)
 {
   e.set(Blackboard{});
@@ -47,6 +50,47 @@ static void create_fuzzy_monster_beh(flecs::entity e)
         {
           const float hp = bb.get<float>("hp");
           return 140.f - hp;
+        }
+      )
+    });
+  e.add<WorldInfoGatherer>();
+  e.set(BehaviourTree{root});
+}
+
+static void create_collective_monster_beh(flecs::entity e, Position basePos)
+{
+  Blackboard bb{};
+  push_info_to_bb(bb, "basePos", basePos);
+  e.set(Blackboard(bb));
+
+  BehNode *root =
+    utility_selector({
+      std::make_pair(
+        move_randomly(),
+        [](Blackboard &bb)
+        {
+          return 50.f;
+        }
+      ),
+      std::make_pair(
+        move_to_base(),
+        [](Blackboard &bb)
+        {
+          const auto teammateDist = bb.get<float>("teammateDist");
+          const auto baseDist = bb.get<float>("baseDist");
+          return std::max(100 - 10 * baseDist + 50 * expf(-0.2f * teammateDist), 0.f);
+        }
+      ),
+      std::make_pair(
+        sequence({
+          find_enemy(e, 5.f, "attack_enemy"),
+          move_to_entity(e, "attack_enemy")
+        }),
+        [](Blackboard &bb)
+        {
+          const auto enemyDist = bb.get<float>("enemyDist");
+          const auto baseDist = bb.get<float>("baseDist");
+          return std::max((10 - enemyDist) * (100 - 10 * baseDist), 0.f);
         }
       )
     });
@@ -180,9 +224,9 @@ void init_roguelike(flecs::world &ecs)
   register_roguelike_systems(ecs);
 
   ecs.entity("swordsman_tex")
-    .set(Texture2D{LoadTexture("assets/swordsman.png")});
+    .set(Texture2D{LoadTexture("w3/assets/swordsman.png")});
   ecs.entity("minotaur_tex")
-    .set(Texture2D{LoadTexture("assets/minotaur.png")});
+    .set(Texture2D{LoadTexture("w3/assets/minotaur.png")});
 
   ecs.observer<Texture2D>()
     .event(flecs::OnRemove)
@@ -197,6 +241,11 @@ void init_roguelike(flecs::world &ecs)
   create_fuzzy_monster_beh(create_monster(ecs, -5, 5, Color{0, 255, 0, 255}, "minotaur_tex"));
 
   create_player(ecs, 0, 0, "swordsman_tex");
+
+  Position basePos = {-6, 3};
+  create_collective_monster_beh(create_monster(ecs, -10, 8, Color{0xee, 0x00, 0xee, 0xff}, "minotaur_tex"), basePos);
+  create_collective_monster_beh(create_monster(ecs, -13, 9, Color{0xee, 0x00, 0xee, 0xff}, "minotaur_tex"), basePos);
+  create_collective_monster_beh(create_monster(ecs, -11, 10, Color{0xee, 0x00, 0xee, 0xff}, "minotaur_tex"), basePos);
 
   create_powerup(ecs, 7, 7, 10.f);
   create_powerup(ecs, 10, -6, 10.f);
@@ -357,18 +406,26 @@ static void gather_world_info(flecs::world &ecs)
                                           const WorldInfoGatherer,
                                           const Team>();
   static auto alliesQuery = ecs.query<const Position, const Team>();
-  gatherWorldInfo.each([&](Blackboard &bb, const Position &pos, const Hitpoints &hp,
+  gatherWorldInfo.each([&](flecs::entity e, Blackboard &bb, const Position &pos, const Hitpoints &hp,
                            WorldInfoGatherer, const Team &team)
   {
     // first gather all needed names (without cache)
     push_info_to_bb(bb, "hp", hp.hitpoints);
     float numAllies = 0; // note float
     float closestEnemyDist = 100.f;
-    alliesQuery.each([&](const Position &apos, const Team &ateam)
+    float closestTeammateDist = 100.f;
+    alliesQuery.each([&](flecs::entity ae, const Position &apos, const Team &ateam)
     {
       constexpr float limitDist = 5.f;
-      if (team.team == ateam.team && dist_sq(pos, apos) < sqr(limitDist))
-        numAllies += 1.f;
+      if (e != ae && team.team == ateam.team)
+      {
+        if (dist_sq(pos, apos) < sqr(limitDist))
+          numAllies += 1.f;
+        const float teammateDist = dist(pos, apos);
+        if (teammateDist < closestTeammateDist)
+          closestTeammateDist = teammateDist;
+      }
+
       if (team.team != ateam.team)
       {
         const float enemyDist = dist(pos, apos);
@@ -376,8 +433,11 @@ static void gather_world_info(flecs::world &ecs)
           closestEnemyDist = enemyDist;
       }
     });
+    auto baseDist = dist(pos, bb.get<Position>("basePos"));
+    push_info_to_bb(bb, "baseDist", baseDist);
     push_info_to_bb(bb, "alliesNum", numAllies);
     push_info_to_bb(bb, "enemyDist", closestEnemyDist);
+    push_info_to_bb(bb, "teammateDist", closestTeammateDist);
   });
 }
 
